@@ -18,6 +18,7 @@ os.makedirs(output_dir, exist_ok=True)
 model_id = "SG161222/Realistic_Vision_V1.4"
 strength = 0.8
 max_steps = 100  # 每张图片最大生成步数
+min_epochs_before_detect = 50  # 至少训练 50 个 epoch 后才开始检测
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # =========================
@@ -34,7 +35,7 @@ pipe.safety_checker = None
 # 加载检测模型 (ResNet50)
 # =========================
 det_model_path = "./resnet50_model/best_acc_model.pth"
-det_model = models.resnet50(pretrained=False)
+det_model = models.resnet50(weights=None)
 det_model.fc = nn.Linear(det_model.fc.in_features, 2)  # 2类: ai=0, real=1
 det_model.load_state_dict(torch.load(det_model_path, map_location=device))
 det_model = det_model.to(device)
@@ -64,7 +65,7 @@ print(f"Found {len(image_files)} jpg images.")
 # =========================
 
 
-check_every_n_steps = 1 # 每隔多少步检测一次
+check_every_n_steps = 1  # 开始检测后，每隔多少 epoch 检测一次
 threshold_prob_real = 0.8  # 概率阈值
 
 counter = 0  
@@ -91,6 +92,14 @@ for img_name in tqdm(image_files, desc="Processing images"):
             num_inference_steps=steps_to_run
         )
         current_image = result.images[0]
+
+        # 至少训练 min_epochs_before_detect 个 epoch 后才开始检测，之后每隔 check_every_n_steps 个 epoch 检测一次
+        should_detect = (
+            step_done >= min_epochs_before_detect and
+            (step_done - min_epochs_before_detect) % check_every_n_steps == 0
+        )
+        if not should_detect:
+            continue  # 未到检测时机，继续下一个 epoch
 
         # ResNet50 检测
         img_tensor = preprocess(current_image).unsqueeze(0).to(device)

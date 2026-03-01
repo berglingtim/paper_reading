@@ -27,3 +27,95 @@
 #### 对于不同的分辨率, 传统的模型受限于固定分辨率传入, 文章提出了SCA(Spectral Context Attention)进行解决， 将图片分成多个固定尺寸的补丁， 独立计算每个补丁的频谱特征， 然后融合每个块的SRS特征，而且其复杂度仅仅是与分块数的线性关系
 #### 其流程图如下
 ![alt text](image.png)
+
+## Open-Unfairness Adversarial Mitigation for Generalized Deepfake Detection
+
+## 思想
+
+提出 **AdvOU（Adversarial Open-Unfairness Discovery and Mitigation Network）**，用于**自适应发现并缓解深度伪造检测器中不可预见的偏见（open-unfairness）**，不依赖预定义的敏感属性（如种族、性别），适用于多种检测模型
+
+比如说：有些检测器对于猩猩和人的分类识别正确率是80%，但是总体的是95%, 另一个检测器总体的识别正确率都是92%(总体也是92%). 某团队在应用来做人类与猩猩的识别研究时不知道这个,就拿着前面那个去识别了,显然, 这是很坏的了
+
+---
+
+### 方法
+
+AdvOU 包含两大核心模块，**交替训练**：
+
+1. **Open-Unfairness Discovery (OUD)**：发现并放大检测器中的不公平特征。
+2. **Unfairness Adversarial Mitigation (UAM)**：通过对抗学习缓解已发现的不公平特征。
+
+整体结构如图：
+
+- 冻结的检测器 ( phi_D )
+- 可训练的 **Unfairness Regulator (UR)** ( phi_R )
+- 不公平分类器 ( sigma_U )
+- 交替优化：OUD 训练 UR，UAM 训练检测器
+
+![](image-1.png)
+
+---
+
+###  1. Open-Unfairness Discovery (OUD)
+
+#### Unfairness Regulator (UR)
+
+- 轻量级瓶颈结构（类似 LoRA）
+- 插入检测器各块中，提取不公平相关特征
+
+#### Unfairness Amplification Learning (UAL)
+
+##### 1. Unfairness Group Amplification (UGA)
+
+- 将样本分为两组：( g_U^+ )（含不公平特征）和 ( g_U^- )（不含）
+- 使用 **Equal Opportunity Violation (EOV)** 损失放大组间差异：
+
+
+##### 2. Unfairness Relation Amplification (URA)
+
+- 对同标签样本，基于特征相似度找出最近和最远样本
+- 放大不公平关系：
+
+最终得到 UAL 损失
+
+---
+
+###  2. Unfairness Adversarial Mitigation (UAM)
+
+####  Global Relation Debiasing
+
+- 对同标签样本，基于不公平特征选择最近样本
+- 随机选一个 pivot 样本，旋转该关系以消除偏见：
+
+####  Local Adversarial Learning (LAL)
+
+- 对共享的浅层特征 ( f_s ) 进行对抗扰动
+- 使用不公平分类器计算梯度，扰动均值和标准差：
+
+- 强制检测器对原始和扰动特征输出一致：
+
+最终得到 UAM 损失
+
+### 总结：方法大致为
+    不断检测然后发现模型存在的不公平，然后通过(UR)得到不公平的特征，之后又通过(UGA)将样本划分为不公平正组(模型容易误判)和不公平负组(模型精度较高,就是不容易误判),在之后用EOV量化两组之间的差异,根据EOV知道是否真的存在不公平
+
+    假如存在不公平(EOV数值判定其存在内部的不公平),通过URA找到两组中相似的的图片,对某图片划分它的最近(相似)(X_ni)和最远(最不相似)(X_fi),然后通过URA扩大最近的那些图片与本图的距离,降低最远的那些图片到本图的距离
+
+    之后GRD会来旋转原来的图片关系, 彻底破坏这种关系,然后针对的进行LAL对抗训练(LAL是针对于不公平特征的攻击),缓和这种不公平
+---
+
+### 主要结果
+- 在多个数据集上超越 SOTA
+- 有效提升检测器的泛化能力和公平性
+- 对多种检测器(EfficientNet、F3Net、UIA-ViT)均有提升
+
+---
+
+### 可视化分析
+
+- **不公平属性分布图**：AdvOU 显著减少四象限中的不公平属性
+![alt text](image-2.png)
+- **对抗扰动图**：不同模型对不公平特征的响应不同（如亮点、背景）
+![alt text](image-3.png)
+- **注意力图**：AdvOU 使模型更关注面部区域，减少对背景等非因果特征的依赖
+![alt text](image-4.png)

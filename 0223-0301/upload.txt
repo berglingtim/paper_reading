@@ -1,0 +1,1 @@
+rsync -avz -e "ssh -p 5122" best_acc_model.pth zhanglin@10.16.52.30:/home/zhanglin/zhanglin/baseline/resnet50_model/

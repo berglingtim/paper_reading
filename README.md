@@ -1,121 +1,147 @@
-1. 对于传统对抗训练和流式对抗训练的更深刻理解
-2. 线性预热 + 余弦衰减
-3. 下一步计划: 傅里叶变换的频域观察
-4. 下载COCO, Open Images, ImageNet数据集
-5. 思考点: 传统模型 固定分辨率传入会损失特征
+## 复现SPAI有感
+https://github.com/mever-team/spai
+这是源代码仓库
+**训练标识**: `train_bs32_ep100` (batch size 32, 100 epochs)
+
+### 训练配置
+| 参数 | 值 |
+|------|-----|
+| Batch Size | 32 |
+| Epochs | 100 |
+| 基础学习率 | 0.0005 |
+| 优化器 | AdamW (weight_decay=0.05) |
+| 学习率调度 | Cosine + 5 epochs warmup |
+| 损失函数 | BCE (Binary Cross Entropy) |
+| 训练数据 | 7,040 张图像 |
+| 验证数据 | 1,760 张图像 |
+| 图像尺寸 | 224×224 |
+| 模型 | ViT-Base (PatchSize=16) |
+| 预训练权重 | mfm_pretrain_vit_base.pth |
+
+### 最佳性能指标 (Epoch 89)
+
+| 指标 | 最佳值 | 对应Epoch |
+|------|--------|-----------|
+| **AP** | **96.6%** | 89 |
+| **AUC** | **96.3%** | 89 |
+| **ACC** | **90.0%** | 87 |
+| **Loss** | **0.6932** | 12 (最低) |
+
+**Epoch 89 具体数据**:
+- 验证 Loss: 0.7845
+- 验证 ACC: 89.7%
+- 验证 AP: **96.6%**
+- 验证 AUC: **96.3%**
+- 训练 Loss: 0.0624
+
+### 训练过程关键节点
+```
+Epoch 0:  ACC=50.0%, AP=60.8%, AUC=63.5%  (初始化)
+Epoch 12: Min Loss=0.6932  (loss最低点)
+Epoch 26: AP开始稳定 >90%
+Epoch 87: Max ACC=90.0%
+Epoch 89: Max AP=96.6%, Max AUC=96.3%  (最佳综合性能)
+Epoch 90-99: 性能稳定维持高位
+```
 
 
-## Any-resolution AI-generated image detection by spectral learning
-### 1. 方法
-### 预处理部分
-#### 已知的方法告诉我们,当我们利用AI建模真实图像时,其准确度会比其直接生成一张图像准确率更低
-#### 该文章将真实图像的频谱分布作为区分点, 在输入图像时, 分离低频部分和高频部分, 然后让模型同时学习从低频重建高频和从高频重建低频(利用的是ViT: vision transformer, 训练目标是,最小化重构的频谱的原始频谱的距离),学习完成后,模型能够捕捉到真实图片和AI生成图片的不同之处, 即学习到真实图像的统计规律(因为AI生成的图片重建后不符合ViT学到的规律)
-#### 为了量化这种差异, 文章提出了SRS(Spectral Reconstruction Similarity)来量化这个差异,分别输入transformer计算
-    原始图像与高频分量, 
-    原始图像与低频分量,
-    高频分量与低频分量的余弦相似度, 
+### 2. 关键成功因素
+- **更大的batch size (32 vs 8)**: 梯度估计更稳定，收敛效果更好
+- **充足的训练轮数 (100 epochs)**: 模型有充分时间学习特征
+- **合适的预训练权重**: 基于mfm_pretrain_vit_base.pth微调，利用了预训练知识
+- **有效的数据增强**: 包含随机裁剪、翻转、旋转、高斯模糊、JPEG压缩等
 
-    然后分别得到他们的平均值(mean)和标准差(deviation)
-
-    那么就会有6N(3 * 2)维度的向量生成, 这就是SRS
-#### 对于不同的图像,防止对某一类图片拟合,SCV(Spectral Context Vector)会根据不同频谱图像的能量分布不同
-    如
-    纹理丰富图像 -- 高频重要
-    平坦区域图像 -- 高频没意义
-#### SCV 是基于ViT各层输出特征(投影后)的均值和标准差，通过可学习的注意力机制构建的，它为SRS提供上下文权重，帮助模型决定哪些 SRS 值更重要。
-#### SCV会为SRS提供语境
-#### 对于不同的分辨率, 传统的模型受限于固定分辨率传入, 文章提出了SCA(Spectral Context Attention)进行解决， 将图片分成多个固定尺寸的补丁， 独立计算每个补丁的频谱特征， 然后融合每个块的SRS特征，而且其复杂度仅仅是与分块数的线性关系
-#### 其流程图如下
-![alt text](image.png)
-
-## Open-Unfairness Adversarial Mitigation for Generalized Deepfake Detection
-
-## 思想
-
-提出 **AdvOU（Adversarial Open-Unfairness Discovery and Mitigation Network）**，用于**自适应发现并缓解深度伪造检测器中不可预见的偏见（open-unfairness）**，不依赖预定义的敏感属性（如种族、性别），适用于多种检测模型
-
-比如说：有些检测器对于猩猩和人的分类识别正确率是80%，但是总体的是95%, 另一个检测器总体的识别正确率都是92%(总体也是92%). 某团队在应用来做人类与猩猩的识别研究时不知道这个,就拿着前面那个去识别了,显然, 这是很坏的了
-
----
-
-### 方法
-
-AdvOU 包含两大核心模块，**交替训练**：
-
-1. **Open-Unfairness Discovery (OUD)**：发现并放大检测器中的不公平特征。
-2. **Unfairness Adversarial Mitigation (UAM)**：通过对抗学习缓解已发现的不公平特征。
-
-整体结构如图：
-
-- 冻结的检测器 ( phi_D )
-- 可训练的 **Unfairness Regulator (UR)** ( phi_R )
-- 不公平分类器 ( sigma_U )
-- 交替优化：OUD 训练 UR，UAM 训练检测器
-
-![](image-1.png)
-
----
-
-###  1. Open-Unfairness Discovery (OUD)
-
-#### Unfairness Regulator (UR)
-
-- 轻量级瓶颈结构（类似 LoRA）
-- 插入检测器各块中，提取不公平相关特征
-
-#### Unfairness Amplification Learning (UAL)
-
-##### 1. Unfairness Group Amplification (UGA)
-
-- 将样本分为两组：( g_U^+ )（含不公平特征）和 ( g_U^- )（不含）
-- 使用 **Equal Opportunity Violation (EOV)** 损失放大组间差异：
-
-
-##### 2. Unfairness Relation Amplification (URA)
-
-- 对同标签样本，基于特征相似度找出最近和最远样本
-- 放大不公平关系：
-
-最终得到 UAL 损失
+### 3. 收敛分析
+- **快速上升期 (Epoch 0-20)**: AP从60%快速提升到90%+
+- **稳定优化期 (Epoch 20-89)**: 缓慢提升至最佳性能
+- **平稳期 (Epoch 89-99)**: 性能基本稳定，略有波动
 
 ---
 
-###  2. Unfairness Adversarial Mitigation (UAM)
+## 复现论文代码结构
 
-####  Global Relation Debiasing
+### MFM预训练（通过自监督学习，让模型学习真实图像的频谱分布）
 
-- 对同标签样本，基于不公平特征选择最近样本
-- 随机选一个 pivot 样本，旋转该关系以消除偏见：
+```
+┌─────────────────────────────────────────────────────────────┐
+│  输入图像 (PIL Image)                                        │
+│     ↓                                                        │
+│  数据增强：RandomResizedCrop + RandomHorizontalFlip          │
+│     ↓                                                        │
+│  频域掩码生成：FreqMaskGenerator                              │
+│     - 随机选择高通或低通滤波器                                │
+│     - mask_radius1=16（默认）                                │
+│     - 采样比例sample_ratio=0.5（随机选择高低频）               │
+│     ↓                                                        │
+│  频域变换（2D FFT）：                                         │
+│     - 将图像转换到频域                                        │
+│     - 应用圆形掩码（中心低频/边缘高频）                        │
+│     - 2D IFFT恢复时域图像（被损坏的版本）                      │
+│     ↓                                                        │
+│  编码器（ViT/Swin/ResNet）处理被损坏的图像 → 潜在表示 z       │
+│     ↓                                                        │
+│  解码器（PixelShuffle上采样）→ 重建图像                       │
+│     ↓                                                        │
+│  损失函数：Frequency Loss（计算重建图像与原始图像的差异）        │
+└─────────────────────────────────────────────────────────────┘
+```
 
-####  Local Adversarial Learning (LAL)
+### 监督微调（在AI生成图像检测任务上进行微调）
 
-- 对共享的浅层特征 ( f_s ) 进行对抗扰动
-- 使用不公平分类器计算梯度，扰动均值和标准差：
+```
+┌─────────────────────────────────────────────────────────────┐
+│  输入图像（真实图像 + AI生成图像）                            │
+│     ↓                                                        │
+│  频谱预处理（MFViT.forward）：                                │
+│     - 原始图像 → 归一化 → ViT特征提取                         │
+│     - 低频分量 → 归一化 → ViT特征提取                         │
+│     - 高频分量 → 归一化 → ViT特征提取                         │
+│     ↓                                                        │
+│  频谱恢复估计器（FrequencyRestorationEstimator）：            │
+│     - 对每个patch特征进行投影                                 │
+│     - 计算余弦相似度：                                        │
+│       • sim(原始, 低频)                                       │
+│       • sim(原始, 高频)                                       │
+│       • sim(低频, 高频)                                       │
+│     - 计算均值和标准差 → 6*N维特征向量（N=中间层数）           │
+│     - （可选）原始图像特征分支 → 加权投影                       │
+│     ↓                                                        │
+│  分类头（ClassificationHead）：                               │
+│     - MLP (输入→输入×mlp_ratio→输入×mlp_ratio→num_classes)   │
+│     ↓                                                        │
+│  损失计算：BCE Loss / SupCon Loss / Triplet Loss              │
+└─────────────────────────────────────────────────────────────┘
+```
+### 具体的调用如下(为了防止代码不见了,我特意放在了隔壁文件夹,作为我的第一份复现的代码,各种备份是必要的,假如有陌生人闯入了我的github仓库,注意隔壁哪个叫做spai的文件夹不是我的,原网址为https://github.com/mever-team/spai)
 
-- 强制检测器对原始和扰动特征输出一致：
+```
+MFM预训练:
+main_mfm.py:main()
+    └── models/mfm.py:build_mfm()
+        ├── VisionTransformerForMFM (encoder)
+        ├── VisionTransformerDecoderForMFM (decoder, optional)
+        └── MFM (wrapper)
+    └── data/data_mfm.py:build_loader_mfm()
+        └── MFMTransform + FreqMaskGenerator
 
-最终得到 UAM 损失
+监督微调:
+__main__.py:train()
+    └── models/build.py:build_cls_model()
+        └── models/sid.py:PatchBasedMFViT / MFViT
+            ├── MFViT (频谱预处理)
+            │   ├── filters.py:filter_image_frequencies()
+            │   └── vision_transformer.py:VisionTransformer
+            ├── FrequencyRestorationEstimator (频谱恢复估计)
+            │   ├── Projector (patch投影)
+            │   └── FeatureImportanceProjector (原始特征分支)
+            └── ClassificationHead (分类头)
+    └── data/data_finetune.py:build_loader_finetune()
+        └── CSVDataset + build_transform()
+```
 
-### 总结：方法大致为
-    不断检测然后发现模型存在的不公平，然后通过(UR)得到不公平的特征，之后又通过(UGA)将样本划分为不公平正组(模型容易误判)和不公平负组(模型精度较高,就是不容易误判),在之后用EOV量化两组之间的差异,根据EOV知道是否真的存在不公平
-
-    假如存在不公平(EOV数值判定其存在内部的不公平),通过URA找到两组中相似的的图片,对某图片划分它的最近(相似)(X_ni)和最远(最不相似)(X_fi),然后通过URA扩大最近的那些图片与本图的距离,降低最远的那些图片到本图的距离
-
-    之后GRD会来旋转原来的图片关系, 彻底破坏这种关系,然后针对的进行LAL对抗训练(LAL是针对于不公平特征的攻击),缓和这种不公平
----
-
-### 主要结果
-- 在多个数据集上超越 SOTA
-- 有效提升检测器的泛化能力和公平性
-- 对多种检测器(EfficientNet、F3Net、UIA-ViT)均有提升
-
----
-
-### 可视化分析
-
-- **不公平属性分布图**：AdvOU 显著减少四象限中的不公平属性
-![alt text](image-2.png)
-- **对抗扰动图**：不同模型对不公平特征的响应不同（如亮点、背景）
-![alt text](image-3.png)
-- **注意力图**：AdvOU 使模型更关注面部区域，减少对背景等非因果特征的依赖
-![alt text](image-4.png)
+## 因为第一次复现出了论文，本身有点激动，而且也有了些想法,查了些资料后,有了写信的收获，故列举出下个周以及之后做的小实验的方向
+```
+1. 颜色丰富度+皮肤平滑度+饱和度+噪声+面部对称性是否过于完美+面部光影
+2. 将图分成RGB图，三个通道分别进行不同的处理，分别学习判断，采用3局两胜的方式进行判断
+3. 观察RRDataset(真假各取一百张)的RGB, error level analysis(ELA),Noise Pattern, Edge Detection, Frequency Domain(FFT),local binary pattern, color histogram,(若有人脸,特别对人脸进行框取进行分析!!!), R-G distribution,R-B distribution, G-B distribution, luminance histogram,saturation histogram
+```
